@@ -32,6 +32,7 @@
  #include "sh4tmu.h"
  #include "sh_dasm.h"
  #include "cpu/drcumlsh.h"
+ #include "sh34_timings.h"
  
  
  DEFINE_DEVICE_TYPE(SH3, sh3_device,   "sh3", "Hitachi SH-3 (Unidentified)")
