@@ -167,6 +167,8 @@
  
 	 void set_mmu_hacktype(int hacktype) { m_mmuhack = hacktype; }
  
+	 TIMER_CALLBACK_MEMBER(sh4_refresh_timer_callback);
+	 TIMER_CALLBACK_MEMBER(sh4_rtc_timer_callback);
 	 TIMER_CALLBACK_MEMBER(sh4_timer_callback);
 	 TIMER_CALLBACK_MEMBER(sh4_dmac_callback);
  
@@ -248,6 +250,10 @@
 	 void func_MOVCAL();
 	 void func_STCSSR();
 	 void func_STCSPC();
+
+	 bool is_in_cache(uint32_t address);
+	 void func_drc_memory_read_timing();
+	 void func_drc_memory_write_timing();
  
  protected:
 	 // construction/destruction
@@ -266,6 +272,8 @@
  
 	 // device_memory_interface overrides
 	 virtual space_config_vector memory_space_config() const override;
+	 
+	 // Comment this out?
 	 virtual bool memory_translate(int spacenum, int intention, offs_t& address, address_space*& target_space) override;
  
 	 // device_state_interface overrides
@@ -365,7 +373,10 @@
 	 int     m_internal_irq_vector;
  
 	 emu_timer *m_dma_timer[4];
+	 emu_timer *m_refresh_timer;
+	 emu_timer *m_rtc_timer;
 	 emu_timer *m_timer[3];
+	 uint32_t  m_refresh_timer_base;
 	 int     m_dma_timer_active[4];
 	 uint32_t  m_dma_source[4];
 	 uint32_t  m_dma_destination[4];
@@ -387,9 +398,13 @@
 	 int     m_willjump;
  
 	 //void    (*m_ftcsr_read_callback)(uint32_t data);
- 
+
 	 bool m_sh4_mmu_enabled;
- 
+
+	 // sh3 internal
+	 uint32_t m_sh3internal_upper[0x3000 / 4];
+	 uint32_t m_sh3internal_lower[0x1000];
+
 	 uint64_t m_debugger_temp;
  
 	 inline void sh4_check_pending_irq(const char *message) // look for highest priority active exception and handle it
@@ -426,7 +441,11 @@
 	 void sh4_exception_checkunrequest(int exception);
 	 void sh4_exception_process(int exception, uint32_t vector);
 	 void sh4_exception(const char *message, int exception);
+	 uint32_t compute_ticks_refresh_timer(emu_timer *timer, int hertz, int base, int divisor);
+	 void sh4_refresh_timer_recompute();
+	 void increment_rtc_time(int mode);
 	 void sh4_dmac_nmi();
+	 void sh4_handler_ipra_w(uint32_t data, uint32_t mem_mask);
 	 uint16_t ipra_r(offs_t offset, uint16_t mem_mask);
 	 void ipra_w(offs_t offset, uint16_t data, uint16_t mem_mask);
 	 virtual uint32_t get_remap(uint32_t address);
@@ -685,7 +704,16 @@
  class sh3_base_device : public sh34_base_device
  {
 	 friend class sh4_frontend;
- 
+
+ public:
+	 void sh3_internal_w(offs_t offset, uint32_t data, uint32_t mem_mask = ~0);
+	 uint32_t sh3_internal_r(offs_t offset, uint32_t mem_mask = ~0);
+
+	 void sh3_internal_high_w(offs_t offset, uint32_t data, uint32_t mem_mask = ~0);
+	 uint32_t sh3_internal_high_r(offs_t offset, uint32_t mem_mask = ~0);
+
+	 void sh3_internal_map(address_map &map) ATTR_COLD;
+
  protected:
 	 // construction/destruction
 	 sh3_base_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock, endianness_t endianness);
@@ -1234,6 +1262,10 @@
  
  class sh4_base_device : public sh34_base_device
  {
+ public:
+	 void sh4_internal_w(offs_t offset, uint32_t data, uint32_t mem_mask = ~0);
+	 uint32_t sh4_internal_r(offs_t offset, uint32_t mem_mask = ~0);
+
  protected:
 	 friend class sh4_frontend;
  
@@ -1678,7 +1710,16 @@
 	 emu_timer* m_refresh_timer;
 	 uint32_t  m_refresh_timer_base;
 	 sh4_utlb m_utlb[64];
- 
+
+	 void sh4_internal_map(address_map &map) ATTR_COLD;
+
+ protected:
+	 // construction/destruction
+	 sh4_base_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, uint32_t clock, endianness_t endianness);
+
+	 virtual void device_start() override ATTR_COLD;
+	 virtual void device_reset() override ATTR_COLD;
+
 	 // UBC
 	 uint32_t m_bara;
 	 uint8_t m_bamra;
@@ -1875,9 +1916,11 @@
 	 uint32_t m_pcipdr;
  };
  
- 
+
  class sh3_device : public sh3_base_device
  {
+	friend class sh4_frontend;
+
  public:
 	 sh3_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock, endianness_t endianness = ENDIANNESS_LITTLE);
  
